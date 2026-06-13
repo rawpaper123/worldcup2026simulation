@@ -1343,7 +1343,8 @@ body:has(.worldcup-prototype) {
 
     @media (max-width: 760px) {
       .worldcup-prototype .page { padding: 14px; }
-      .worldcup-prototype .nav { top: 8px; margin-bottom: 38px; }
+      .worldcup-prototype .nav { top: 8px; margin-bottom: 38px; padding: 8px 10px; }
+      .worldcup-prototype .nav-links { display: none; }
       .worldcup-prototype .nav-links a:not(.pill) { display: none; }
       .worldcup-prototype .hero-main { padding: 28px; min-height: 520px; }
       .worldcup-prototype h1 { font-size: 54px; }
@@ -1867,6 +1868,9 @@ body:has(.worldcup-prototype) {
         width: 38px !important;
         height: 38px !important;
         font-size: 12px !important;
+      }
+      .worldcup-prototype .powered-badge {
+        display: none;
       }
     }
 
