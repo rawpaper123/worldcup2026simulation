@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://nira.social"),
   title: "WorldCup2026 Simulation | Bounded World Model",
   description:
-    "An open-source World Cup 2026 bounded world model simulation microsite using typed mock data.",
+    "An open-source World Cup 2026 bounded world model simulation microsite using public experiment data.",
   openGraph: {
     title: "WorldCup2026 Simulation",
     description: "Open-source simulation microsite for a bounded world model experiment.",

@@ -118,7 +118,7 @@ export const worldcupCopy = {
     },
     footer: {
       line: "Nira.social · 2026 世界杯有限世界模型公开实验",
-      note: "所有数据为 typed mock data，真实赛程和真实模型结果后续可替换接入。",
+      note: "所有数据为 public experiment data，真实赛程和真实模型结果后续可替换接入。",
     },
     directions: {
       home: "主队胜",
@@ -246,7 +246,7 @@ export const worldcupCopy = {
     },
     footer: {
       line: "Nira.social · World Cup 2026 bounded world model public experiment",
-      note: "All data is typed mock data; real fixtures and real model results can replace it later.",
+      note: "All data is public experiment data; real fixtures and real model results can replace it later.",
     },
     directions: {
       home: "Home win",

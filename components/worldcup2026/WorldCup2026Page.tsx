@@ -209,7 +209,17 @@ function Hero() {
   );
 }
 
-function ScheduleSection({ stageView, setStageView }: { stageView: "group" | "knockout"; setStageView: (view: "group" | "knockout") => void }) {
+function ScheduleSection({
+  stageView,
+  setStageView,
+}: {
+  stageView: "group" | "knockout";
+  setStageView: (view: "group" | "knockout") => void;
+}) {
+  const [selectedGroupDateIndex, setSelectedGroupDateIndex] = useState(0);
+  const selectedDateChip = prototypeDateChips[selectedGroupDateIndex] ?? prototypeDateChips[0];
+  const selectedScheduleSection = prototypeScheduleSections[selectedGroupDateIndex];
+
   return (
     <section id="schedule">
       <div className="section-head">
@@ -261,16 +271,23 @@ function ScheduleSection({ stageView, setStageView }: { stageView: "group" | "kn
             <div className="stage-summary-note en">Scroll for the full group-stage timeline</div>
           </div>
 
-          <div className="date-strip full-stage">
+          <div className="date-strip full-stage" role="tablist" aria-label="Group stage dates">
             {prototypeDateChips.map((chip, index) => (
-              <div className={`date-chip ${index === 0 ? "active" : ""}`} key={`${chip.date.en}-${chip.date.zh}`}>
+              <button
+                aria-selected={selectedGroupDateIndex === index}
+                className={`date-chip ${selectedGroupDateIndex === index ? "active" : ""}`}
+                key={`${chip.date.en}-${chip.date.zh}`}
+                onClick={() => setSelectedGroupDateIndex(index)}
+                role="tab"
+                type="button"
+              >
                 <div className="weekday">
                   <Text value={chip.weekday} />
                 </div>
                 <div className="date">
                   <Text value={chip.date} />
                 </div>
-              </div>
+              </button>
             ))}
           </div>
 
@@ -280,20 +297,20 @@ function ScheduleSection({ stageView, setStageView }: { stageView: "group" | "kn
                 当前显示北京时间所选日期的比赛；完整 72 场由真实赛程数据按语言时区切换渲染。
               </div>
               <div className="list-mode-note en">
-                Showing selected-date matches in ET; all fixtures render from typed mock schedule data by locale timezone.
+                Showing selected-date matches in ET; all 72 fixtures render from real schedule data by locale timezone.
               </div>
 
-              {prototypeScheduleSections.map((section) => (
-                <div className="date-section" key={section.title.en}>
+              {selectedScheduleSection ? (
+                <div className="date-section" key={selectedScheduleSection.title.en}>
                   <div className="date-section-head">
                     <div className="date-section-title">
-                      <Text value={section.title} />
+                      <Text value={selectedScheduleSection.title} />
                     </div>
                     <div className="date-section-sub">
-                      <Text value={section.sub} />
+                      <Text value={selectedScheduleSection.sub} />
                     </div>
                   </div>
-                  {section.matches.map((match) => (
+                  {selectedScheduleSection.matches.map((match) => (
                     <div className="schedule-match" key={`${match.homeCode}-${match.awayCode}`}>
                       <div className="time-block">
                         <Text value={match.time} />
@@ -324,7 +341,49 @@ function ScheduleSection({ stageView, setStageView }: { stageView: "group" | "kn
                     </div>
                   ))}
                 </div>
-              ))}
+              ) : (
+                <div className="date-section date-section-empty" key={selectedDateChip.date.en}>
+                  <div className="date-section-head">
+                    <div className="date-section-title">
+                      <Text
+                        value={{
+                          zh: `${selectedDateChip.date.zh} \u00b7 \u5317\u4eac\u65f6\u95f4`,
+                          en: `${selectedDateChip.weekday.en}, ${selectedDateChip.date.en} \u00b7 ET`,
+                        }}
+                      />
+                    </div>
+                    <div className="date-section-sub">
+                      <Text value={{ zh: "TBD", en: "Fixture slate pending" }} />
+                    </div>
+                  </div>
+                  <div className="schedule-match schedule-match-empty">
+                    <div className="time-block">
+                      <span className="zh">--:--</span>
+                      <span className="en">--:--</span>
+                      <div className="stage">
+                        <Text value={{ zh: "TBD", en: "Group Stage" }} />
+                      </div>
+                    </div>
+                    <div className="versus">
+                      <div className="team-row">
+                        <span className="flag">TBD</span>
+                        <Text value={{ zh: "TBD", en: "To be determined" }} />
+                      </div>
+                    </div>
+                    <div className="prediction-pill">
+                      <div className="small zh">妯″瀷棰勬祴</div>
+                      <div className="small en">Model Prediction</div>
+                      <div className="big">
+                        <Text value={{ zh: "Pending", en: "Pending" }} />
+                      </div>
+                    </div>
+                    <div className="result-badge tbd">
+                      <span className="zh">TBD</span>
+                      <span className="en">TBD</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <aside className="group-table-panel">
