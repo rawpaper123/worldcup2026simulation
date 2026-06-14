@@ -2,6 +2,87 @@ export type WorldCupLanguage = "zh" | "en";
 
 export type LocalizedText = Record<WorldCupLanguage, string>;
 
+export type WorldCupGroup =
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "E"
+  | "F"
+  | "G"
+  | "H"
+  | "I"
+  | "J"
+  | "K"
+  | "L";
+
+export type WorldCupMatchStage =
+  | "group"
+  | "round_of_32"
+  | "round_of_16"
+  | "quarter_final"
+  | "semi_final"
+  | "third_place"
+  | "final";
+
+export type WorldCupMatchStatus =
+  | "scheduled"
+  | "live"
+  | "completed"
+  | "postponed"
+  | "tbd";
+
+export type WorldCupTeam = {
+  id: string;
+  code: string;
+  name: LocalizedText;
+  group?: WorldCupGroup;
+};
+
+export type TeamSlot = {
+  type: "team" | "placeholder";
+  teamId?: string;
+  nameZh?: string;
+  nameEn?: string;
+  code?: string;
+  placeholderZh?: string;
+  placeholderEn?: string;
+};
+
+export type MatchScore = {
+  teamA: number;
+  teamB: number;
+  afterExtraTime?: boolean;
+  penalties?: {
+    teamA: number;
+    teamB: number;
+  };
+};
+
+export type DataSourceMeta = {
+  sourceName: string;
+  sourceUrl?: string;
+  sourceUpdatedAt: string;
+  notes?: string;
+};
+
+export type WorldCupMatch = {
+  id: string;
+  matchNumber: number;
+  stage: WorldCupMatchStage;
+  group?: WorldCupGroup;
+  kickoffUtc: string;
+  venueId: string;
+  city: string;
+  country: string;
+  teamA: TeamSlot;
+  teamB: TeamSlot;
+  status: WorldCupMatchStatus;
+  score?: MatchScore;
+  winnerTeamId?: string;
+  source: DataSourceMeta;
+};
+
 export type Team = {
   id: string;
   code: string;

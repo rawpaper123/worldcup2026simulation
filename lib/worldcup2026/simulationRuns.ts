@@ -1,0 +1,43 @@
+import type { SimulationBatch } from "./worldModelTypes";
+
+export const worldCup2026SeedSimulationBatches: SimulationBatch[] = [
+  {
+    matchId: "wc2026-001",
+    batchId: "batch-wc2026-001",
+    targetRuns: 1000,
+    completedRuns: 1000,
+    status: "completed",
+    lastUpdatedAt: "2026-06-11T18:40:00.000Z",
+    aggregate: { teamAWinPct: 56, drawPct: 27, teamBWinPct: 17 },
+    currentDirection: "teamA_win",
+    confidenceLabel: "medium",
+    agentSummaryZh: "主场节奏和开局压迫形成轻微优势，风险代理保留平局扰动。",
+    agentSummaryEn: "Home rhythm and early pressure create a modest edge, with draw paths still watched.",
+  },
+  {
+    matchId: "wc2026-003",
+    batchId: "batch-wc2026-003",
+    targetRuns: 1000,
+    completedRuns: 642,
+    status: "running",
+    lastUpdatedAt: "2026-06-12T16:30:00.000Z",
+    aggregate: { teamAWinPct: 43, drawPct: 29, teamBWinPct: 28 },
+    currentDirection: "teamA_win",
+    confidenceLabel: "low",
+    agentSummaryZh: "主队优势仍在校准，数据代理要求等待关键变量稳定。",
+    agentSummaryEn: "The home edge is still calibrating while data checks wait for key variables.",
+  },
+  {
+    matchId: "wc2026-004",
+    batchId: "batch-wc2026-004",
+    targetRuns: 1000,
+    completedRuns: 1000,
+    status: "completed",
+    lastUpdatedAt: "2026-06-12T20:10:00.000Z",
+    aggregate: { teamAWinPct: 58, drawPct: 24, teamBWinPct: 18 },
+    currentDirection: "teamA_win",
+    confidenceLabel: "medium",
+    agentSummaryZh: "主场势能占优，但控制代理下调了过度自信。",
+    agentSummaryEn: "Home momentum leads, while control checks reduce overconfidence.",
+  },
+];

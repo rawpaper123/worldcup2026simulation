@@ -1,16 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { WORLD_CUP_2026_NEXT_MATCH_ID } from "@/lib/worldcup2026/fixtures";
+import { worldCup2026AgentProfiles } from "@/lib/worldcup2026/agentDebates";
+import { getWorldCup2026WorldState } from "@/lib/worldcup2026/simulationEngine";
 import {
-  prototypeAgents,
-  prototypeDateChips,
-  prototypeLogs,
-  prototypeScheduleSections,
-  prototypeSimulationCards,
-  type PrototypeText,
-} from "@/lib/worldcup2026/worldcupPrototypeData";
+  buildGroupStageDateRail,
+  formatFixtureRailParts,
+  formatFixtureDateTitle,
+  formatFixtureTime,
+  formatTimestampForLocale,
+  getFixturesForDisplayDate,
+  getWorldCupTimeProfile,
+} from "@/lib/worldcup2026/timezone";
 import { WORLD_CUP_LANGUAGE_STORAGE_KEY } from "@/lib/worldcup2026/worldcupCopy";
-import type { WorldCupLanguage } from "@/lib/worldcup2026/types";
+import type {
+  LocalizedText,
+  TeamSlot,
+  WorldCupLanguage,
+  WorldCupMatch,
+  WorldCupMatchStage,
+} from "@/lib/worldcup2026/types";
+import type {
+  BoundedWorldState,
+  MatchPrediction,
+  PaperBankrollEntry,
+  PredictionDirection,
+  SimulationBatch,
+} from "@/lib/worldcup2026/worldModelTypes";
 
 function detectInitialLanguage(): WorldCupLanguage {
   if (typeof window === "undefined") return "zh";
@@ -31,13 +48,81 @@ function detectInitialLanguage(): WorldCupLanguage {
   return hasChineseLanguage || looksChinaLocal ? "zh" : "en";
 }
 
-function Text({ value }: { value: PrototypeText }) {
+function Text({ value }: { value: LocalizedText }) {
   return (
     <>
       <span className="zh">{value.zh}</span>
       <span className="en">{value.en}</span>
     </>
   );
+}
+
+function slotName(slot: TeamSlot, language: WorldCupLanguage) {
+  if (slot.type === "team") return language === "zh" ? slot.nameZh ?? "" : slot.nameEn ?? "";
+  return language === "zh" ? slot.placeholderZh ?? "TBD" : slot.placeholderEn ?? "TBD";
+}
+
+function slotCode(slot: TeamSlot) {
+  return slot.code ?? "TBD";
+}
+
+function matchName(fixture: WorldCupMatch, language: WorldCupLanguage) {
+  return `${slotName(fixture.teamA, language)} vs ${slotName(fixture.teamB, language)}`;
+}
+
+function directionSlot(fixture: WorldCupMatch, direction: PredictionDirection) {
+  if (direction === "teamA_win") return fixture.teamA;
+  if (direction === "teamB_win") return fixture.teamB;
+  return undefined;
+}
+
+function directionLabel(
+  fixture: WorldCupMatch,
+  direction: PredictionDirection,
+  language: WorldCupLanguage,
+) {
+  if (direction === "draw") return language === "zh" ? "平局" : "Draw";
+  const team = directionSlot(fixture, direction);
+  const name = team ? slotName(team, language) : "TBD";
+  return language === "zh" ? `${name}胜` : `${name} Win`;
+}
+
+function confidenceLabel(confidence: string, language: WorldCupLanguage) {
+  const zh = { low: "低可信度", medium: "中等可信度", high: "高可信度" };
+  const en = { low: "Low", medium: "Medium", high: "High" };
+  return language === "zh"
+    ? zh[confidence as keyof typeof zh] ?? confidence
+    : en[confidence as keyof typeof en] ?? confidence;
+}
+
+function directionPct(batch: SimulationBatch | undefined, direction: PredictionDirection) {
+  if (!batch) return 0;
+  if (direction === "teamA_win") return batch.aggregate.teamAWinPct;
+  if (direction === "teamB_win") return batch.aggregate.teamBWinPct;
+  return batch.aggregate.drawPct;
+}
+
+function stageLabel(stage: WorldCupMatchStage, language: WorldCupLanguage) {
+  const labels: Record<WorldCupMatchStage, LocalizedText> = {
+    group: { zh: "小组赛", en: "Group Stage" },
+    round_of_32: { zh: "32强", en: "Round of 32" },
+    round_of_16: { zh: "16强", en: "Round of 16" },
+    quarter_final: { zh: "四分之一决赛", en: "Quarterfinal" },
+    semi_final: { zh: "半决赛", en: "Semifinal" },
+    third_place: { zh: "季军赛", en: "Third Place" },
+    final: { zh: "决赛", en: "Final" },
+  };
+
+  return labels[stage][language];
+}
+
+function formatCurrency(value: number) {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}$${Math.abs(value).toLocaleString("en-US", { maximumFractionDigits: 1 })}`;
+}
+
+function formatStake(value: number) {
+  return `$${value.toLocaleString("en-US", { maximumFractionDigits: 1 })}`;
 }
 
 function WinText({ zh, en }: { zh: string; en: string }) {
@@ -88,7 +173,55 @@ function LanguageButton({
   );
 }
 
-function Hero() {
+function DateChip({
+  active,
+  bucketKey,
+  language,
+  sampleUtc,
+  onClick,
+}: {
+  active: boolean;
+  bucketKey: string;
+  language: WorldCupLanguage;
+  sampleUtc: string;
+  onClick: () => void;
+}) {
+  const railDate = formatFixtureRailParts(sampleUtc, language);
+
+  return (
+    <button
+      aria-selected={active}
+      className={`date-chip ${active ? "active" : ""}`}
+      key={bucketKey}
+      onClick={onClick}
+      role="tab"
+      type="button"
+    >
+      <div className="weekday">{railDate.weekday}</div>
+      <div className="date">{railDate.date}</div>
+    </button>
+  );
+}
+
+function Hero({ worldState }: { worldState: BoundedWorldState }) {
+  const record = worldState.modelRecord;
+  const nextFixture =
+    worldState.fixtures.find((fixture) => fixture.id === WORLD_CUP_2026_NEXT_MATCH_ID) ??
+    worldState.fixtures[0];
+  const nextPrediction =
+    worldState.predictions.find((prediction) => prediction.matchId === nextFixture.id) ??
+    worldState.predictions[0];
+  const nextBatch = worldState.simulationBatches.find(
+    (batch) => batch.matchId === nextFixture.id,
+  );
+  const probability = nextPrediction ? directionPct(nextBatch, nextPrediction.direction) : 0;
+  const zhDirection = nextPrediction
+    ? `${directionLabel(nextFixture, nextPrediction.direction, "zh")} · ${confidenceLabel(nextPrediction.confidenceLabel, "zh")}`
+    : "TBD";
+  const enDirection = nextPrediction
+    ? `${directionLabel(nextFixture, nextPrediction.direction, "en")} · ${confidenceLabel(nextPrediction.confidenceLabel, "en")}`
+    : "TBD";
+
   return (
     <div className="hero">
       <div className="hero-main">
@@ -135,35 +268,35 @@ function Hero() {
                 <span className="zh">正确率</span>
                 <span className="en">Accuracy</span>
               </div>
-              <div className="accuracy">66.7%</div>
+              <div className="accuracy">{record.accuracy.toFixed(1)}%</div>
             </div>
             <div className="streak-panel">
               <div className="streak-main">
                 <span className="zh">连续预测正确</span>
-                <span className="en">Current correct streak</span> <strong>4</strong>{" "}
+                <span className="en">Current correct streak</span> <strong>{record.currentCorrectStreak}</strong>{" "}
                 <span className="zh">场</span>
                 <span className="en">matches</span>
               </div>
               <div className="streak-sub">
-                <span className="zh">最高连续正确 7 场</span>
-                <span className="en">Best streak: 7 matches</span>
+                <span className="zh">最高连续正确 {record.bestCorrectStreak} 场</span>
+                <span className="en">Best streak: {record.bestCorrectStreak} matches</span>
               </div>
             </div>
           </div>
 
           <div className="record-grid">
             <div className="mini-stat">
-              <div className="value">24</div>
+              <div className="value">{record.predictedCount}</div>
               <div className="label zh">已预测</div>
               <div className="label en">Predicted</div>
             </div>
             <div className="mini-stat">
-              <div className="value">16</div>
+              <div className="value">{record.correctCount}</div>
               <div className="label zh">预测正确</div>
               <div className="label en">Correct</div>
             </div>
             <div className="mini-stat">
-              <div className="value">104</div>
+              <div className="value">{record.totalMatches}</div>
               <div className="label zh">总场次</div>
               <div className="label en">Matches</div>
             </div>
@@ -177,14 +310,22 @@ function Hero() {
           </div>
           <div className="match-line">
             <div>
-              <div className="game-time zh">A组 · 6月12日 09:00 北京时间</div>
-              <div className="game-time en">Group A · Jun 11 · 9:00 PM ET</div>
+              <div className="game-time zh">
+                {nextFixture.group ? `${nextFixture.group}组 · ` : ""}
+                {formatTimestampForLocale(nextFixture.kickoffUtc, "zh")}
+              </div>
+              <div className="game-time en">
+                {nextFixture.group ? `Group ${nextFixture.group} · ` : ""}
+                {formatTimestampForLocale(nextFixture.kickoffUtc, "en")}
+              </div>
               <div className="teams">
                 <span className="zh">
-                  墨西哥 <span className="vs">vs</span> 南非
+                  {slotName(nextFixture.teamA, "zh")} <span className="vs">vs</span>{" "}
+                  {slotName(nextFixture.teamB, "zh")}
                 </span>
                 <span className="en">
-                  Mexico <span className="vs">vs</span> South Africa
+                  {slotName(nextFixture.teamA, "en")} <span className="vs">vs</span>{" "}
+                  {slotName(nextFixture.teamB, "en")}
                 </span>
               </div>
             </div>
@@ -198,10 +339,10 @@ function Hero() {
               <div className="prediction-label zh">模型预测</div>
               <div className="prediction-label en">Model Prediction</div>
               <div className="prediction-value">
-                <WinText zh="墨西哥胜 · 中等可信度" en="Mexico Win · Medium" />
+                <WinText zh={zhDirection} en={enDirection} />
               </div>
             </div>
-            <div className="probability">56%</div>
+            <div className="probability">{probability}%</div>
           </div>
         </div>
       </div>
@@ -210,15 +351,64 @@ function Hero() {
 }
 
 function ScheduleSection({
+  language,
+  worldState,
   stageView,
   setStageView,
 }: {
+  language: WorldCupLanguage;
+  worldState: BoundedWorldState;
   stageView: "group" | "knockout";
   setStageView: (view: "group" | "knockout") => void;
 }) {
-  const [selectedGroupDateIndex, setSelectedGroupDateIndex] = useState(0);
-  const selectedDateChip = prototypeDateChips[selectedGroupDateIndex] ?? prototypeDateChips[0];
-  const selectedScheduleSection = prototypeScheduleSections[selectedGroupDateIndex];
+  const [selectedGroupDateKey, setSelectedGroupDateKey] = useState("");
+  const groupFixtures = useMemo(
+    () => worldState.fixtures.filter((fixture) => fixture.stage === "group"),
+    [worldState.fixtures],
+  );
+  const knockoutFixtures = useMemo(
+    () => worldState.fixtures.filter((fixture) => fixture.stage !== "group"),
+    [worldState.fixtures],
+  );
+  const dateRail = useMemo(
+    () => buildGroupStageDateRail(groupFixtures, language),
+    [groupFixtures, language],
+  );
+  const selectedDateBucket = dateRail.find((bucket) => bucket.key === selectedGroupDateKey);
+  const selectedFixtures = selectedGroupDateKey
+    ? getFixturesForDisplayDate(groupFixtures, selectedGroupDateKey, language)
+    : [];
+  const predictionByMatch = useMemo(
+    () => new Map(worldState.predictions.map((prediction) => [prediction.matchId, prediction])),
+    [worldState.predictions],
+  );
+  const batchByMatch = useMemo(
+    () => new Map(worldState.simulationBatches.map((batch) => [batch.matchId, batch])),
+    [worldState.simulationBatches],
+  );
+  const groupATeams = groupFixtures
+    .filter((fixture) => fixture.group === "A")
+    .flatMap((fixture) => [fixture.teamA, fixture.teamB])
+    .filter((slot, index, slots) => slots.findIndex((item) => slotCode(item) === slotCode(slot)) === index)
+    .slice(0, 4);
+  const knockoutStageOrder: WorldCupMatchStage[] = [
+    "round_of_32",
+    "round_of_16",
+    "quarter_final",
+    "semi_final",
+    "third_place",
+    "final",
+  ];
+  const knockoutRounds: Array<{ stage: WorldCupMatchStage; matches: WorldCupMatch[] }> = knockoutStageOrder.map((stage) => ({
+    stage,
+    matches: knockoutFixtures.filter((fixture) => fixture.stage === stage),
+  }));
+
+  useEffect(() => {
+    if (!dateRail.length) return;
+    const hasActiveDate = dateRail.some((bucket) => bucket.key === selectedGroupDateKey);
+    if (!hasActiveDate) setSelectedGroupDateKey(dateRail[0].key);
+  }, [dateRail, selectedGroupDateKey]);
 
   return (
     <section id="schedule">
@@ -272,22 +462,15 @@ function ScheduleSection({
           </div>
 
           <div className="date-strip full-stage" role="tablist" aria-label="Group stage dates">
-            {prototypeDateChips.map((chip, index) => (
-              <button
-                aria-selected={selectedGroupDateIndex === index}
-                className={`date-chip ${selectedGroupDateIndex === index ? "active" : ""}`}
-                key={`${chip.date.en}-${chip.date.zh}`}
-                onClick={() => setSelectedGroupDateIndex(index)}
-                role="tab"
-                type="button"
-              >
-                <div className="weekday">
-                  <Text value={chip.weekday} />
-                </div>
-                <div className="date">
-                  <Text value={chip.date} />
-                </div>
-              </button>
+            {dateRail.map((bucket) => (
+              <DateChip
+                active={selectedGroupDateKey === bucket.key}
+                bucketKey={bucket.key}
+                key={bucket.key}
+                language={language}
+                sampleUtc={bucket.sampleUtc}
+                onClick={() => setSelectedGroupDateKey(bucket.key)}
+              />
             ))}
           </div>
 
@@ -300,57 +483,70 @@ function ScheduleSection({
                 Showing selected-date matches in ET; all 72 fixtures render from real schedule data by locale timezone.
               </div>
 
-              {selectedScheduleSection ? (
-                <div className="date-section" key={selectedScheduleSection.title.en}>
+              {selectedDateBucket ? (
+                <div className="date-section" key={selectedDateBucket.key}>
                   <div className="date-section-head">
                     <div className="date-section-title">
-                      <Text value={selectedScheduleSection.title} />
+                      {formatFixtureDateTitle(selectedDateBucket.sampleUtc, language)}
                     </div>
                     <div className="date-section-sub">
-                      <Text value={selectedScheduleSection.sub} />
+                      {selectedFixtures.length} {language === "zh" ? "场比赛" : selectedFixtures.length === 1 ? "match" : "matches"}
                     </div>
                   </div>
-                  {selectedScheduleSection.matches.map((match) => (
-                    <div className="schedule-match" key={`${match.homeCode}-${match.awayCode}`}>
+                  {selectedFixtures.map((match) => {
+                    const prediction = predictionByMatch.get(match.id);
+                    const batch = batchByMatch.get(match.id);
+                    const predictedDirection = prediction?.direction ?? batch?.currentDirection;
+                    const predictedPct = predictedDirection ? directionPct(batch, predictedDirection) : 0;
+
+                    return (
+                    <div className="schedule-match" key={match.id}>
                       <div className="time-block">
-                        <Text value={match.time} />
+                        {formatFixtureTime(match.kickoffUtc, language)}
                         <div className="stage">
-                          <Text value={match.group} />
+                          {language === "zh" ? `${match.group}组` : `Group ${match.group}`}
                         </div>
                       </div>
                       <div className="versus">
                         <div className="team-row">
-                          <span className="flag">{match.homeCode}</span>
-                          <Text value={match.home} />
+                          <span className="flag">{slotCode(match.teamA)}</span>
+                          {slotName(match.teamA, language)}
                         </div>
                         <div className="team-row">
-                          <span className="flag">{match.awayCode}</span>
-                          <Text value={match.away} />
+                          <span className="flag">{slotCode(match.teamB)}</span>
+                          {slotName(match.teamB, language)}
                         </div>
                       </div>
                       <div className="prediction-pill">
                         <div className="small zh">模型预测</div>
                         <div className="small en">Model Prediction</div>
                         <div className="big">
-                          <WinText zh={match.prediction.zh} en={match.prediction.en} />
+                          {predictedDirection ? (
+                            <WinText
+                              zh={`${directionLabel(match, predictedDirection, "zh")} · ${predictedPct}%`}
+                              en={`${directionLabel(match, predictedDirection, "en")} · ${predictedPct}%`}
+                            />
+                          ) : (
+                            <Text value={{ zh: "待生成", en: "Pending" }} />
+                          )}
                         </div>
                       </div>
-                      <div className={`result-badge ${match.state}`}>
-                        <Text value={match.stateLabel} />
+                      <div className={`result-badge ${prediction?.settledCorrect ? "correct" : "pending"}`}>
+                        {prediction?.settledCorrect ? (
+                          <Text value={{ zh: "命中 ✓", en: "Correct ✓" }} />
+                        ) : (
+                          <Text value={{ zh: "未开赛", en: "Pending" }} />
+                        )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
-                <div className="date-section date-section-empty" key={selectedDateChip.date.en}>
+                <div className="date-section date-section-empty" key={selectedGroupDateKey || "empty"}>
                   <div className="date-section-head">
                     <div className="date-section-title">
-                      <Text
-                        value={{
-                          zh: `${selectedDateChip.date.zh} \u00b7 \u5317\u4eac\u65f6\u95f4`,
-                          en: `${selectedDateChip.weekday.en}, ${selectedDateChip.date.en} \u00b7 ET`,
-                        }}
-                      />
+                      TBD
                     </div>
                     <div className="date-section-sub">
                       <Text value={{ zh: "TBD", en: "Fixture slate pending" }} />
@@ -371,7 +567,7 @@ function ScheduleSection({
                       </div>
                     </div>
                     <div className="prediction-pill">
-                      <div className="small zh">妯″瀷棰勬祴</div>
+                      <div className="small zh">模型预测</div>
                       <div className="small en">Model Prediction</div>
                       <div className="big">
                         <Text value={{ zh: "Pending", en: "Pending" }} />
@@ -388,42 +584,37 @@ function ScheduleSection({
 
             <aside className="group-table-panel">
               <div className="group-table-head">
-                <span className="zh">A组积分</span>
-                <span className="en">Group A Standings</span>
-                <span className="zh">示例</span>
-                <span className="en">Mock</span>
+                <span className="zh">A组球队</span>
+                <span className="en">Group A Teams</span>
+                <span className="zh">赛程数据</span>
+                <span className="en">Fixture data</span>
               </div>
-              {[
-                ["1", "墨西哥", "Mexico", "3", "+1", "W"],
-                ["2", "加拿大", "Canada", "0", "0", "—"],
-                ["3", "韩国", "Korea", "0", "0", "—"],
-                ["4", "南非", "South Africa", "0", "-1", "L"],
-              ].map(([rank, zhTeam, enTeam, points, diff, form]) => (
-                <div className="standings-row" key={rank}>
-                  <div className="rank">{rank}</div>
+              {groupATeams.map((team, index) => (
+                <div className="standings-row" key={slotCode(team)}>
+                  <div className="rank">{index + 1}</div>
                   <div className="team">
-                    <span className="zh">{zhTeam}</span>
-                    <span className="en">{enTeam}</span>
+                    <span className="zh">{slotName(team, "zh")}</span>
+                    <span className="en">{slotName(team, "en")}</span>
                   </div>
-                  <div className="num">{points}</div>
-                  <div className="num">{diff}</div>
-                  <div className="num">{form}</div>
+                  <div className="num">{slotCode(team)}</div>
+                  <div className="num">3</div>
+                  <div className="num">—</div>
                 </div>
               ))}
 
               <div className="board-summary">
                 <div className="summary-cell">
-                  <strong>24</strong>
+                  <strong>{worldState.modelRecord.predictedCount}</strong>
                   <span className="zh">已预测</span>
                   <span className="en">Predicted</span>
                 </div>
                 <div className="summary-cell">
-                  <strong>16</strong>
+                  <strong>{worldState.modelRecord.correctCount}</strong>
                   <span className="zh">命中</span>
                   <span className="en">Correct</span>
                 </div>
                 <div className="summary-cell">
-                  <strong>66.7%</strong>
+                  <strong>{worldState.modelRecord.accuracy.toFixed(1)}%</strong>
                   <span className="zh">正确率</span>
                   <span className="en">Accuracy</span>
                 </div>
@@ -453,77 +644,31 @@ function ScheduleSection({
         <div id="knockout-stage-view" className={`stage-view ${stageView === "knockout" ? "active" : ""}`}>
           <div className="knockout-view">
             <div className="knockout-grid">
-              <div className="knockout-round">
-                <div className="knockout-round-title">
-                  <span className="zh">32强</span>
-                  <span className="en">Round of 32</span>
-                </div>
-                <div className="knockout-match correct">
-                  <div className="knockout-meta">
-                    <span className="zh">第73场</span>
-                    <span className="en">Match 73</span>
-                    <span className="zh">7月1日 北京时间</span>
-                    <span className="en">Jun 30 ET</span>
-                  </div>
-                  <div className="knockout-team">
-                    <span className="zh">A组第一</span>
-                    <span className="en">Winner Group A</span>
-                    <span>2</span>
-                  </div>
-                  <div className="knockout-team">
-                    <span className="zh">B组第二</span>
-                    <span className="en">Runner-up Group B</span>
-                    <span>1</span>
-                  </div>
-                  <div className="knockout-prediction zh">模型预测：A组第一<span className="win-char">胜</span> · 命中 ✓</div>
-                  <div className="knockout-prediction en">Model: Winner Group A <span className="win-char">Win</span> · Correct ✓</div>
-                </div>
-                <div className="knockout-match">
-                  <div className="knockout-meta">
-                    <span className="zh">第74场</span>
-                    <span className="en">Match 74</span>
-                    <span>TBD</span>
-                  </div>
-                  <div className="knockout-team tbd">
-                    <span className="zh">C组第一</span>
-                    <span className="en">Winner Group C</span>
-                    <span>?</span>
-                  </div>
-                  <div className="knockout-team tbd">
-                    <span className="zh">D组第二</span>
-                    <span className="en">Runner-up Group D</span>
-                    <span>?</span>
-                  </div>
-                </div>
-              </div>
-
-              {[
-                ["16强", "Round of 16", "第89场胜者", "Match 89 winner"],
-                ["四分之一决赛", "Quarterfinal", "第97场胜者", "Match 97 winner"],
-                ["半决赛", "Semifinal", "第101场胜者", "Match 101 winner"],
-                ["决赛", "Final", "TBD", "TBD"],
-              ].map(([zhRound, enRound, zhSlot, enSlot], index) => (
-                <div className="knockout-round" key={enRound}>
+              {knockoutRounds.map((round) => (
+                <div className="knockout-round" key={round.stage}>
                   <div className="knockout-round-title">
-                    <span className="zh">{zhRound}</span>
-                    <span className="en">{enRound}</span>
+                    {stageLabel(round.stage, language)}
                   </div>
-                  <div className="knockout-match">
-                    <div className="knockout-meta">
-                      <span className="zh">第{89 + index * 4}场</span>
-                      <span className="en">Match {89 + index * 4}</span>
-                      <span>TBD</span>
+                  {round.matches.map((match) => (
+                    <div className="knockout-match" key={match.id}>
+                      <div className="knockout-meta">
+                        <span className="zh">第{match.matchNumber}场</span>
+                        <span className="en">Match {match.matchNumber}</span>
+                        <span>{formatFixtureDateTitle(match.kickoffUtc, language)}</span>
+                      </div>
+                      <div className="knockout-team tbd">
+                        <span>{slotName(match.teamA, language)}</span>
+                        <span>?</span>
+                      </div>
+                      <div className="knockout-team tbd">
+                        <span>{slotName(match.teamB, language)}</span>
+                        <span>?</span>
+                      </div>
+                      <div className="knockout-prediction">
+                        {match.city} · {match.country}
+                      </div>
                     </div>
-                    <div className="knockout-team tbd">
-                      <span className="zh">{zhSlot}</span>
-                      <span className="en">{enSlot}</span>
-                      <span>?</span>
-                    </div>
-                    <div className="knockout-team tbd">
-                      <span>TBD</span>
-                      <span>?</span>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -534,13 +679,28 @@ function ScheduleSection({
   );
 }
 
-function PaperBankrollSection() {
-  const ledgerRows = [
-    ["日期", "Date", "比赛", "Match", "模型预测", "Prediction", "模拟投入", "Stake", "纸面收益", "Paper profit"],
-    ["6月12日", "Jun 11", "墨西哥 vs 南非", "Mexico vs South Africa", "墨西哥胜", "Mexico Win", "$10", "$10", "+$8", "+$8"],
-    ["6月13日", "Jun 12", "韩国 vs 捷克", "Korea vs Czechia", "韩国胜", "Korea Win", "$12", "$12", "-$12", "-$12"],
-    ["6月13日", "Jun 12", "加拿大 vs 波黑", "Canada vs Bosnia", "加拿大胜", "Canada Win", "$10", "$10", "+$16", "+$16"],
-  ];
+function PaperBankrollSection({ worldState }: { worldState: BoundedWorldState }) {
+  const fixtureById = new Map(worldState.fixtures.map((fixture) => [fixture.id, fixture]));
+  const predictionById = new Map(worldState.predictions.map((prediction) => [prediction.predictionId, prediction]));
+  const bankroll = worldState.paperBankroll;
+
+  function ledgerCells(entry: PaperBankrollEntry) {
+    const fixture = fixtureById.get(entry.matchId);
+    const prediction = predictionById.get(entry.predictionId);
+    const timestamp = entry.settledAt ?? fixture?.kickoffUtc ?? worldState.generatedAt;
+    const direction = fixture && prediction ? prediction.direction : "draw";
+
+    return {
+      dateZh: formatTimestampForLocale(timestamp, "zh"),
+      dateEn: formatTimestampForLocale(timestamp, "en"),
+      matchZh: fixture ? matchName(fixture, "zh") : entry.matchId,
+      matchEn: fixture ? matchName(fixture, "en") : entry.matchId,
+      predictionZh: fixture ? directionLabel(fixture, direction, "zh") : "TBD",
+      predictionEn: fixture ? directionLabel(fixture, direction, "en") : "TBD",
+      stake: formatStake(entry.stake),
+      profit: entry.result === "pending" ? "Pending" : formatCurrency(entry.profit),
+    };
+  }
 
   return (
     <section id="paper-bankroll">
@@ -566,23 +726,25 @@ function PaperBankrollSection() {
               <span className="zh">实时纸面收益</span>
               <span className="en">Live paper profit</span>
             </div>
-            <div className="bankroll-value positive">+$128</div>
+            <div className={`bankroll-value ${bankroll.cumulativeProfit >= 0 ? "positive" : ""}`}>
+              {formatCurrency(bankroll.cumulativeProfit)}
+            </div>
             <div className="bankroll-sub zh">所有结果均来自模拟账本，不代表真实资金结果。</div>
             <div className="bankroll-sub en">All results come from the paper ledger and do not represent real-money outcomes.</div>
           </div>
           <div className="bankroll-grid">
             <div className="bankroll-mini">
-              <strong>$312</strong>
+              <strong>{formatStake(bankroll.cumulativeStake)}</strong>
               <span className="zh">累计模拟投入</span>
               <span className="en">Paper stake</span>
             </div>
             <div className="bankroll-mini">
-              <strong>$440</strong>
+              <strong>{formatStake(bankroll.cumulativeReturn)}</strong>
               <span className="zh">当前模拟回收</span>
               <span className="en">Paper return</span>
             </div>
             <div className="bankroll-mini">
-              <strong>+41.0%</strong>
+              <strong>{`${bankroll.roi >= 0 ? "+" : ""}${(bankroll.roi * 100).toFixed(1)}%`}</strong>
               <span className="zh">纸面收益率</span>
               <span className="en">Paper ROI</span>
             </div>
@@ -590,43 +752,62 @@ function PaperBankrollSection() {
         </div>
 
         <div className="ledger-table">
-          {ledgerRows.map((row, index) => (
-            <div className="ledger-row" key={`${row[0]}-${row[2]}-${index}`}>
+          <div className="ledger-row">
+            <div>
+              <span className="zh">日期</span>
+              <span className="en">Date</span>
+            </div>
+            <div className="ledger-match">
+              <span className="zh">比赛</span>
+              <span className="en">Match</span>
+            </div>
+            <div>
+              <span className="zh">模型预测</span>
+              <span className="en">Prediction</span>
+            </div>
+            <div>
+              <span className="zh">模拟投入</span>
+              <span className="en">Stake</span>
+            </div>
+            <div>
+              <span className="zh">纸面收益</span>
+              <span className="en">Paper profit</span>
+            </div>
+          </div>
+          {bankroll.entries.map((entry) => {
+            const row = ledgerCells(entry);
+
+            return (
+            <div className="ledger-row" key={`${entry.matchId}-${entry.predictionId}`}>
               <div>
-                <span className="zh">{row[0]}</span>
-                <span className="en">{row[1]}</span>
+                <span className="zh">{row.dateZh}</span>
+                <span className="en">{row.dateEn}</span>
               </div>
               <div className="ledger-match">
-                <span className="zh">{row[2]}</span>
-                <span className="en">{row[3]}</span>
+                <span className="zh">{row.matchZh}</span>
+                <span className="en">{row.matchEn}</span>
               </div>
               <div>
-                {index === 0 ? (
-                  <>
-                    <span className="zh">{row[4]}</span>
-                    <span className="en">{row[5]}</span>
-                  </>
-                ) : (
-                  <WinText zh={row[4]} en={row[5]} />
-                )}
+                <WinText zh={row.predictionZh} en={row.predictionEn} />
               </div>
               <div>
-                <span className="zh">{row[6]}</span>
-                <span className="en">{row[7]}</span>
+                {row.stake}
               </div>
-              <div className={index > 0 && row[8].startsWith("-") ? "ledger-loss" : "ledger-profit"}>
-                <span className="zh">{row[8]}</span>
-                <span className="en">{row[9]}</span>
+              <div className={entry.profit < 0 ? "ledger-loss" : "ledger-profit"}>
+                {row.profit}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </section>
   );
 }
 
-function SimulatedWorldSection() {
+function SimulatedWorldSection({ worldState }: { worldState: BoundedWorldState }) {
+  const fixtureById = new Map(worldState.fixtures.map((fixture) => [fixture.id, fixture]));
+
   return (
     <section id="simulated">
       <div className="section-head">
@@ -643,16 +824,45 @@ function SimulatedWorldSection() {
       </div>
 
       <div className="sim-grid">
-        {prototypeSimulationCards.map((card) => (
-          <article className="sim-card" key={card.teams.en}>
+        {worldState.simulationBatches.map((batch) => {
+          const fixture = fixtureById.get(batch.matchId);
+          if (!fixture) return null;
+          const statusText: LocalizedText =
+            batch.status === "completed"
+              ? {
+                  zh: `模拟状态：已完成 · 最近更新：${formatTimestampForLocale(batch.lastUpdatedAt, "zh")}`,
+                  en: `Status: completed · Last updated: ${formatTimestampForLocale(batch.lastUpdatedAt, "en")}`,
+                }
+              : {
+                  zh: `已完成 ${batch.completedRuns} / ${batch.targetRuns} 场 · 最近更新：${formatTimestampForLocale(batch.lastUpdatedAt, "zh")}`,
+                  en: `Completed ${batch.completedRuns} / ${batch.targetRuns} runs · Last updated: ${formatTimestampForLocale(batch.lastUpdatedAt, "en")}`,
+                };
+          const statement: LocalizedText =
+            batch.status === "completed"
+              ? { zh: "已在模拟世界里跑完 1000 场。", en: "Completed 1,000 simulated matches." }
+              : { zh: "阶段性模拟结果仍在校准。", en: "Interim simulation result still calibrating." };
+          const directionZh = directionLabel(fixture, batch.currentDirection, "zh");
+          const directionEn = directionLabel(fixture, batch.currentDirection, "en");
+          const directionValue = directionPct(batch, batch.currentDirection);
+
+          return (
+          <article className="sim-card" key={batch.batchId}>
             <div className="card-meta">
-              <Text value={card.meta} />
+              <span className="zh">
+                {fixture.group ? `${fixture.group}组 · ` : ""}
+                {formatTimestampForLocale(fixture.kickoffUtc, "zh")}
+              </span>
+              <span className="en">
+                {fixture.group ? `Group ${fixture.group} · ` : ""}
+                {formatTimestampForLocale(fixture.kickoffUtc, "en")}
+              </span>
             </div>
             <div className="card-teams">
-              <Text value={card.teams} />
+              <span className="zh">{matchName(fixture, "zh")}</span>
+              <span className="en">{matchName(fixture, "en")}</span>
             </div>
             <div className="card-statement">
-              <Text value={card.statement} />
+              <Text value={statement} />
             </div>
 
             <div className="simulation-block">
@@ -661,7 +871,11 @@ function SimulatedWorldSection() {
                 <span className="en">1,000 simulation results</span>
               </h4>
               <div className="simulation-bars">
-                {card.rows.map((row) => (
+                {[
+                  { label: { zh: slotName(fixture.teamA, "zh"), en: slotName(fixture.teamA, "en") }, value: batch.aggregate.teamAWinPct },
+                  { label: { zh: "平局", en: "Draw" }, value: batch.aggregate.drawPct },
+                  { label: { zh: slotName(fixture.teamB, "zh"), en: slotName(fixture.teamB, "en") }, value: batch.aggregate.teamBWinPct },
+                ].map((row) => (
                   <div className="bar-row" key={row.label.en}>
                     <Text value={row.label} />
                     <div className="bar">
@@ -672,25 +886,31 @@ function SimulatedWorldSection() {
                 ))}
               </div>
               <div className="progress-note">
-                <Text value={card.status} />
+                <Text value={statusText} />
               </div>
             </div>
 
             <div className="card-footer">
-              {card.tags.map((tag) => (
-                <span className="tag" key={`${card.teams.en}-${tag.en}`}>
-                  <WinText zh={tag.zh} en={tag.en} />
-                </span>
-              ))}
+              <span className="tag">
+                <WinText zh={directionZh} en={directionEn} />
+              </span>
+              <span className="tag">{directionValue}%</span>
+              <span className="tag">
+                <span className="zh">{confidenceLabel(batch.confidenceLabel, "zh")}</span>
+                <span className="en">{confidenceLabel(batch.confidenceLabel, "en")}</span>
+              </span>
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
 }
 
-function AgentSection() {
+function AgentSection({ worldState }: { worldState: BoundedWorldState }) {
+  const activeDebate = worldState.agentDebates[0];
+
   return (
     <section id="model">
       <div className="section-head">
@@ -712,19 +932,19 @@ function AgentSection() {
       </div>
 
       <div className="agents">
-        {prototypeAgents.map((agent) => (
+        {worldCup2026AgentProfiles.map((agent) => (
           <div className="agent-card" key={agent.name}>
             <div>
               <div className="agent-name">{agent.name}</div>
               <div className="agent-desc">
-                <Text value={agent.desc} />
+                <Text value={agent.role} />
               </div>
             </div>
             <div>
               <div className="subagent-label zh">5 个副 Agent 正在校验</div>
               <div className="subagent-label en">5 sub-agents validating</div>
               <div className="subagent-strip">
-                {Array.from({ length: 5 }).map((_, index) => (
+                {Array.from({ length: agent.subAgentCount }).map((_, index) => (
                   <span className="subagent-dot" key={index} />
                 ))}
               </div>
@@ -732,12 +952,22 @@ function AgentSection() {
           </div>
         ))}
       </div>
+      {activeDebate ? (
+        <p className="section-desc zh" style={{ marginTop: 18 }}>
+          {activeDebate.summaryZh}
+        </p>
+      ) : null}
+      {activeDebate ? (
+        <p className="section-desc en" style={{ marginTop: 18 }}>
+          {activeDebate.summaryEn}
+        </p>
+      ) : null}
     </section>
   );
 }
 
-function EvolutionLogSection() {
-  const logLoop = [...prototypeLogs, ...prototypeLogs];
+function EvolutionLogSection({ worldState }: { worldState: BoundedWorldState }) {
+  const logLoop = [...worldState.evolutionLogs, ...worldState.evolutionLogs];
 
   return (
     <section>
@@ -759,17 +989,14 @@ function EvolutionLogSection() {
       <div className="log-ticker">
         <div className="log-track">
           {logLoop.map((log, index) => (
-            <div className="log-card" key={`${log.time}-${index}`}>
+            <div className="log-card" key={`${log.id}-${index}`}>
               <div className="log-time">
-                {log.time.split("\n").map((line) => (
-                  <span key={line}>
-                    {line}
-                    <br />
-                  </span>
-                ))}
+                <span className="zh">{formatTimestampForLocale(log.timestamp, "zh")}</span>
+                <span className="en">{formatTimestampForLocale(log.timestamp, "en")}</span>
               </div>
               <div className="log-text">
-                <Text value={log.text} />
+                <span className="zh">{log.textZh}</span>
+                <span className="en">{log.textEn}</span>
               </div>
             </div>
           ))}
@@ -873,7 +1100,18 @@ function ModelEvolutionSection() {
   );
 }
 
-function SharingCardsSection() {
+function SharingCardsSection({ worldState }: { worldState: BoundedWorldState }) {
+  const record = worldState.modelRecord;
+  const nextFixture =
+    worldState.fixtures.find((fixture) => fixture.id === WORLD_CUP_2026_NEXT_MATCH_ID) ??
+    worldState.fixtures[0];
+  const nextPrediction =
+    worldState.predictions.find((prediction) => prediction.matchId === nextFixture.id) ??
+    worldState.predictions[0];
+  const nextBatch = worldState.simulationBatches.find((batch) => batch.matchId === nextFixture.id);
+  const nextDirection = nextPrediction?.direction ?? nextBatch?.currentDirection ?? "teamA_win";
+  const nextDirectionPct = directionPct(nextBatch, nextDirection);
+
   return (
     <section>
       <div className="section-head">
@@ -905,24 +1143,28 @@ function SharingCardsSection() {
 
           <div>
             <div className="share-metric">
-              4<span style={{ fontSize: ".32em", letterSpacing: "-.04em" }}> 场</span>
+              {record.currentCorrectStreak}<span style={{ fontSize: ".32em", letterSpacing: "-.04em" }}> 场</span>
             </div>
-            <div className="share-probability zh">当前正确率 66.7% · 最高连续正确 7 场</div>
-            <div className="share-probability en">Current accuracy 66.7% · Best streak 7</div>
+            <div className="share-probability zh">
+              当前正确率 {record.accuracy.toFixed(1)}% · 最高连续正确 {record.bestCorrectStreak} 场
+            </div>
+            <div className="share-probability en">
+              Current accuracy {record.accuracy.toFixed(1)}% · Best streak {record.bestCorrectStreak}
+            </div>
 
             <div className="share-mini-grid">
               <div className="share-mini">
-                <strong>24</strong>
+                <strong>{record.predictedCount}</strong>
                 <span className="zh">已预测</span>
                 <span className="en">Predicted</span>
               </div>
               <div className="share-mini">
-                <strong>16</strong>
+                <strong>{record.correctCount}</strong>
                 <span className="zh">命中</span>
                 <span className="en">Correct</span>
               </div>
               <div className="share-mini">
-                <strong>+$128</strong>
+                <strong>{formatCurrency(worldState.paperBankroll.cumulativeProfit)}</strong>
                 <span className="zh">模拟收益</span>
                 <span className="en">Paper profit</span>
               </div>
@@ -946,31 +1188,38 @@ function SharingCardsSection() {
             </div>
             <div style={{ height: 30 }} />
             <div className="share-title">
-              <span className="zh">墨西哥 vs 南非</span>
-              <span className="en">Mexico vs South Africa</span>
+              <span className="zh">{matchName(nextFixture, "zh")}</span>
+              <span className="en">{matchName(nextFixture, "en")}</span>
             </div>
           </div>
 
           <div>
             <div className="share-result">
-              <WinText zh="墨西哥胜" en="Mexico Win" />
+              <WinText
+                zh={directionLabel(nextFixture, nextDirection, "zh")}
+                en={directionLabel(nextFixture, nextDirection, "en")}
+              />
             </div>
-            <div className="share-probability zh">演化方向 56% · 中等可信度 · 已完成 1000 场模拟</div>
-            <div className="share-probability en">Direction 56% · Medium confidence · 1,000 simulations completed</div>
+            <div className="share-probability zh">
+              演化方向 {nextDirectionPct}% · {confidenceLabel(nextPrediction?.confidenceLabel ?? "medium", "zh")} · 已完成 {nextBatch?.completedRuns ?? 0} 场模拟
+            </div>
+            <div className="share-probability en">
+              Direction {nextDirectionPct}% · {confidenceLabel(nextPrediction?.confidenceLabel ?? "medium", "en")} · {nextBatch?.completedRuns ?? 0} simulations completed
+            </div>
 
             <div className="share-mini-grid">
               <div className="share-mini">
-                <strong>56%</strong>
+                <strong>{nextDirectionPct}%</strong>
                 <span className="zh">胜向比例</span>
                 <span className="en">Win direction</span>
               </div>
               <div className="share-mini">
-                <strong>1000</strong>
+                <strong>{nextBatch?.targetRuns ?? 1000}</strong>
                 <span className="zh">模拟场次</span>
                 <span className="en">Simulations</span>
               </div>
               <div className="share-mini">
-                <strong>4</strong>
+                <strong>{record.currentCorrectStreak}</strong>
                 <span className="zh">连续命中</span>
                 <span className="en">Streak</span>
               </div>
@@ -1004,6 +1253,7 @@ function SharingCardsSection() {
 export default function WorldCup2026Page() {
   const [language, setLanguage] = useState<WorldCupLanguage>("zh");
   const [stageView, setStageView] = useState<"group" | "knockout">("group");
+  const worldState = useMemo(() => getWorldCup2026WorldState(), []);
 
   useEffect(() => {
     setLanguage(detectInitialLanguage());
@@ -1055,14 +1305,19 @@ export default function WorldCup2026Page() {
           </div>
         </nav>
 
-        <Hero />
-        <ScheduleSection stageView={stageView} setStageView={setStageView} />
-        <PaperBankrollSection />
-        <SimulatedWorldSection />
-        <AgentSection />
-        <EvolutionLogSection />
+        <Hero worldState={worldState} />
+        <ScheduleSection
+          language={language}
+          stageView={stageView}
+          setStageView={setStageView}
+          worldState={worldState}
+        />
+        <PaperBankrollSection worldState={worldState} />
+        <SimulatedWorldSection worldState={worldState} />
+        <AgentSection worldState={worldState} />
+        <EvolutionLogSection worldState={worldState} />
         <ModelEvolutionSection />
-        <SharingCardsSection />
+        <SharingCardsSection worldState={worldState} />
 
         <footer className="footer">
           <div>Powered by Nira.social</div>
