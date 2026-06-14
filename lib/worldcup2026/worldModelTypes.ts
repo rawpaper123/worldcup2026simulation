@@ -127,7 +127,7 @@ export type WorldModelRuntime = {
   generatedAt: string;
   fixtureSourceVersion: string;
   predictionSourceVersion: string;
-  runtimeKind: "seed" | "private_adapter";
+  runtimeKind: "seed" | "adapter";
 };
 
 export type BoundedWorldState = {

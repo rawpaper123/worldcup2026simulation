@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { WORLD_CUP_2026_NEXT_MATCH_ID } from "@/lib/worldcup2026/fixtures";
 import { worldCup2026AgentProfiles } from "@/lib/worldcup2026/agentDebates";
-import { getWorldCup2026WorldState } from "@/lib/worldcup2026/simulationEngine";
 import {
   buildGroupStageDateRail,
   formatFixtureRailParts,
@@ -1255,10 +1254,14 @@ function SharingCardsSection({ worldState }: { worldState: BoundedWorldState }) 
   );
 }
 
-export default function WorldCup2026Page() {
+export default function WorldCup2026Page({
+  initialWorldState,
+}: {
+  initialWorldState: BoundedWorldState;
+}) {
   const [language, setLanguage] = useState<WorldCupLanguage>("zh");
   const [stageView, setStageView] = useState<"group" | "knockout">("group");
-  const worldState = useMemo(() => getWorldCup2026WorldState(), []);
+  const worldState = initialWorldState;
 
   useEffect(() => {
     setLanguage(detectInitialLanguage());
