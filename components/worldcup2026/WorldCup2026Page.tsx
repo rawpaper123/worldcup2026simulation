@@ -374,6 +374,7 @@ function ScheduleSection({
     () => buildGroupStageDateRail(groupFixtures, language),
     [groupFixtures, language],
   );
+  const firstGroupDateKey = dateRail[0]?.key ?? "";
   const selectedDateBucket = dateRail.find((bucket) => bucket.key === selectedGroupDateKey);
   const selectedFixtures = selectedGroupDateKey
     ? getFixturesForDisplayDate(groupFixtures, selectedGroupDateKey, language)
@@ -409,6 +410,10 @@ function ScheduleSection({
     const hasActiveDate = dateRail.some((bucket) => bucket.key === selectedGroupDateKey);
     if (!hasActiveDate) setSelectedGroupDateKey(dateRail[0].key);
   }, [dateRail, selectedGroupDateKey]);
+
+  useEffect(() => {
+    if (firstGroupDateKey) setSelectedGroupDateKey(firstGroupDateKey);
+  }, [firstGroupDateKey, language]);
 
   return (
     <section id="schedule">

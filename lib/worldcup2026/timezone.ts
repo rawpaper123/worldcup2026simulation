@@ -88,7 +88,7 @@ export function formatFixtureTime(kickoffUtc: string, language: WorldCupLanguage
   const profile = getWorldCupTimeProfile(language);
   const time = new Intl.DateTimeFormat(profile.locale, {
     timeZone: profile.timeZone,
-    hour: "numeric",
+    hour: language === "zh" ? "2-digit" : "numeric",
     minute: "2-digit",
     hour12: language === "en",
   }).format(new Date(kickoffUtc));
@@ -102,7 +102,7 @@ export function formatTimestampForLocale(timestampUtc: string, language: WorldCu
     timeZone: profile.timeZone,
     month: language === "zh" ? "numeric" : "short",
     day: "numeric",
-    hour: "numeric",
+    hour: language === "zh" ? "2-digit" : "numeric",
     minute: "2-digit",
     hour12: language === "en",
   }).format(new Date(timestampUtc));
